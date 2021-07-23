@@ -292,7 +292,7 @@ def load_hg_model(config_path, checkpoint_path):
             return
 
     config = hg.configuration.Configuration.load(config_path)
-    inputs = FakeInputs([256,256,3])
+    inputs = FakeInputs([args.size[0],args.size[1],3])
     gan = hg.GAN(config, inputs=inputs)
     name = os.path.basename(config_path)
     gan.load("saves/"+name+"/default.save")
@@ -324,7 +324,10 @@ make_cutouts = MakeCutouts(cut_size, args.cutn, cut_pow=args.cut_pow)
 sideX = 256
 sideY = 256
 
-z = torch.rand([1, 1024], device='cuda:0')*2-1
+#z = torch.rand([1, 1024], device='cuda:0')*2-1
+z = model.latent.next()
+#z=torch.cat([model.latent.next(),model.latent.next(),model.latent.next(),model.latent.next()], dim=1).view(1, 256, 32, 32)
+
 
 z_orig = z.clone()
 z.requires_grad_(True)
@@ -370,6 +373,8 @@ elif args.optimiser == "AdamP":
     opt = AdamP([z], lr=args.step_size)		# LR=2+?
 elif args.optimiser == "RAdam":
     opt = RAdam([z], lr=args.step_size)		# LR=2+?
+elif args.optimiser == "RMSprop":
+    opt = optim.RMSprop([z], lr=args.step_size)		# LR=2+?
 
 
 # Output for the user
