@@ -294,7 +294,7 @@ def load_hg_model(config_path, checkpoint_path):
     inputs = FakeInputs([256,256,3])
     gan = hg.GAN(config, inputs=inputs)
     name = os.path.basename(config_path)
-    gan.load("saves/"+name+"/default.save")
+    gan.load("models/saves/"+name+"/default.save")
     return gan
 
 def resize_image(image, out_size):
@@ -307,7 +307,7 @@ def resize_image(image, out_size):
 
 # Do it
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-model = load_hg_model(args.vqgan_config, args.vqgan_checkpoint).to(device)
+model = load_hg_model("models/"+args.vqgan_config, args.vqgan_checkpoint).to(device)
 jit = True if float(torch.__version__[:3]) < 1.8 else False
 perceptor = clip.load(args.clip_model, jit=jit)[0].eval().requires_grad_(False).to(device)
 
