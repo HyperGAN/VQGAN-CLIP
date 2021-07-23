@@ -3,7 +3,6 @@
 
 import argparse
 import os
-from email.policy import default
 import hypergan as hg
 import math
 from urllib.request import urlopen
@@ -287,7 +286,7 @@ def load_hg_model(config_path, checkpoint_path):
         def channels(self):
             return self.shape[2]
         def next(self):
-            return torch.zeros([self.batch_size(),self.channels(),self.height(),self.width()]),torch.zeros([self.batch_size(), 8, 300]),[[]]
+            return torch.zeros([self.batch_size(),self.channels(),self.height(),self.width()])
         def to(self, device):
             return
 
@@ -321,13 +320,29 @@ cut_size = perceptor.visual.input_resolution
 
 make_cutouts = MakeCutouts(cut_size, args.cutn, cut_pow=args.cut_pow)
 
-sideX = 256
-sideY = 256
-
 #z = torch.rand([1, 1024], device='cuda:0')*2-1
 z = model.latent.next()
-#z=torch.cat([model.latent.next(),model.latent.next(),model.latent.next(),model.latent.next()], dim=1).view(1, 256, 32, 32)
-
+if args.init_image:
+    print('Using initial image:', args.init_image)
+    if 'http' in args.init_image:
+      img = Image.open(urlopen(args.init_image))
+    else:
+      img = Image.open(args.init_image)
+    pil_image = img.convert('RGB')
+    #pil_image = pil_image.resize((sideX, sideY), Image.LANCZOS)
+    pil_tensor = TF.to_tensor(pil_image).to(device)
+    #mask = pil_tensor >0.999
+    #mask_n = pil_tensor <=0.999
+    #img = random_noise_image(args.size[0], args.size[1])    
+    #pil_noise = img.convert('RGB')
+    #pil_noise = pil_image.resize((sideX, sideY), Image.LANCZOS)
+    #pil_noise = TF.to_tensor(pil_noise).to(device)
+    #pil_noise = torch.randn_like(pil_tensor) * 0.1
+    #pil_tensor = pil_tensor * mask_n + pil_noise*mask
+ 
+    with torch.no_grad():
+        z = model.encoder(pil_tensor.unsqueeze(0) * 2 - 1)
+        print(z.shape,"-----", pil_tensor.unsqueeze(0).shape)
 
 z_orig = z.clone()
 z.requires_grad_(True)
