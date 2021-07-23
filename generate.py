@@ -62,10 +62,11 @@ vq_parser.add_argument("-lr",   "--learning_rate", type=float, help="Learning ra
 vq_parser.add_argument("-cuts", "--num_cuts", type=int, help="Number of cuts", default=32, dest='cutn')
 vq_parser.add_argument("-cutp", "--cut_power", type=float, help="Cut power", default=1., dest='cut_pow')
 vq_parser.add_argument("-sd",   "--seed", type=int, help="Seed", default=None, dest='seed')
-vq_parser.add_argument("-opt",  "--optimiser", type=str, help="Optimiser (Adam, AdamW, Adagrad, Adamax, DiffGrad, AdamP or RAdam)", default='Adam', dest='optimiser')
+vq_parser.add_argument("-opt",  "--optimiser", type=str, help="Optimiser (RMSprop, Adam, AdamW, Adagrad, Adamax, DiffGrad, AdamP or RAdam)", default='Adam', dest='optimiser')
 vq_parser.add_argument("-o",    "--output", type=str, help="Output file", default="output.png", dest='output')
 vq_parser.add_argument("-vid",  "--video", action='store_true', help="Create video frames?", dest='make_video')
 vq_parser.add_argument("-d",    "--deterministic", action='store_true', help="Enable cudnn.deterministic?", dest='cudnn_determinism')
+vq_parser.add_argument("-dl",    "--discriminator_loss", action='store_true', help="Include discriminator loss?", dest='discriminator_loss')
 #vq_parser.add_argument("-aug", "--augments", type=str, help="Augments (to be defined)", default='Unknown', dest='augments')
 
 # Execute the parse_args() method
@@ -209,8 +210,8 @@ class Prompt(nn.Module):
         input_normed = F.normalize(input.unsqueeze(1), dim=2)
         embed_normed = F.normalize(self.embed.unsqueeze(0), dim=2)
         dists = input_normed.sub(embed_normed).norm(dim=2).div(2).arcsin().pow(2).mul(2)
-        dists = dists * self.weight.sign()
-        return self.weight.abs() * replace_grad(dists, torch.maximum(dists, self.stop)).mean()
+        #dists = dists * self.weight.sign()
+        return self.weight.abs() * dists.mean()#replace_grad(dists, torch.maximum(dists, self.stop)).mean()
 
 
 def parse_prompt(prompt):
@@ -291,7 +292,7 @@ def load_hg_model(config_path, checkpoint_path):
             return
 
     config = hg.configuration.Configuration.load(config_path)
-    inputs = FakeInputs([256,256,3])
+    inputs = FakeInputs([args.size[0],args.size[1],3])
     gan = hg.GAN(config, inputs=inputs)
     name = os.path.basename(config_path)
     gan.load("models/saves/"+name+"/default.save")
@@ -323,7 +324,10 @@ make_cutouts = MakeCutouts(cut_size, args.cutn, cut_pow=args.cut_pow)
 sideX = 256
 sideY = 256
 
-z = torch.rand([1, 1024], device='cuda:0')*2-1
+#z = torch.rand([1, 1024], device='cuda:0')*2-1
+z = model.latent.next()
+#z=torch.cat([model.latent.next(),model.latent.next(),model.latent.next(),model.latent.next()], dim=1).view(1, 256, 32, 32)
+
 
 z_orig = z.clone()
 z.requires_grad_(True)
@@ -369,6 +373,8 @@ elif args.optimiser == "AdamP":
     opt = AdamP([z], lr=args.step_size)		# LR=2+?
 elif args.optimiser == "RAdam":
     opt = RAdam([z], lr=args.step_size)		# LR=2+?
+elif args.optimiser == "RMSprop":
+    opt = optim.RMSprop([z], lr=args.step_size)		# LR=2+?
 
 
 # Output for the user
@@ -424,6 +430,13 @@ def ascend_txt():
 
     for prompt in pMs:
         result.append(prompt(iii))
+
+    if args.discriminator_loss:
+        criterion = torch.nn.BCEWithLogitsLoss()
+        #d_fake = model.discriminator(out)
+        d_fake = model.discriminator(torch.cat([out,out], dim=1))
+        #result.append(d_fake)
+        result.append(criterion(d_fake, torch.zeros_like(d_fake)))
     
     if args.make_video:    
         img = np.array(out.mul(255).clamp(0, 255)[0].cpu().detach().numpy().astype(np.uint8))[:,:,:]
