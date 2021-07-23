@@ -62,10 +62,11 @@ vq_parser.add_argument("-lr",   "--learning_rate", type=float, help="Learning ra
 vq_parser.add_argument("-cuts", "--num_cuts", type=int, help="Number of cuts", default=32, dest='cutn')
 vq_parser.add_argument("-cutp", "--cut_power", type=float, help="Cut power", default=1., dest='cut_pow')
 vq_parser.add_argument("-sd",   "--seed", type=int, help="Seed", default=None, dest='seed')
-vq_parser.add_argument("-opt",  "--optimiser", type=str, help="Optimiser (Adam, AdamW, Adagrad, Adamax, DiffGrad, AdamP or RAdam)", default='Adam', dest='optimiser')
+vq_parser.add_argument("-opt",  "--optimiser", type=str, help="Optimiser (RMSprop, Adam, AdamW, Adagrad, Adamax, DiffGrad, AdamP or RAdam)", default='Adam', dest='optimiser')
 vq_parser.add_argument("-o",    "--output", type=str, help="Output file", default="output.png", dest='output')
 vq_parser.add_argument("-vid",  "--video", action='store_true', help="Create video frames?", dest='make_video')
 vq_parser.add_argument("-d",    "--deterministic", action='store_true', help="Enable cudnn.deterministic?", dest='cudnn_determinism')
+vq_parser.add_argument("-dl",    "--discriminator_loss", action='store_true', help="Include discriminator loss?", dest='discriminator_loss')
 #vq_parser.add_argument("-aug", "--augments", type=str, help="Augments (to be defined)", default='Unknown', dest='augments')
 
 # Execute the parse_args() method
@@ -424,6 +425,13 @@ def ascend_txt():
 
     for prompt in pMs:
         result.append(prompt(iii))
+
+    if args.discriminator_loss:
+        criterion = torch.nn.BCEWithLogitsLoss()
+        #d_fake = model.discriminator(out)
+        d_fake = model.discriminator(torch.cat([out,out], dim=1))
+        #result.append(d_fake)
+        result.append(criterion(d_fake, torch.zeros_like(d_fake)))
     
     if args.make_video:    
         img = np.array(out.mul(255).clamp(0, 255)[0].cpu().detach().numpy().astype(np.uint8))[:,:,:]
