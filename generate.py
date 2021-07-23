@@ -2,7 +2,9 @@
 # The original BigGAN+CLIP method was by https://twitter.com/advadnoun
 
 import argparse
+import os
 from email.policy import default
+import hypergan as hg
 import math
 from urllib.request import urlopen
 from tqdm import tqdm
@@ -70,17 +72,17 @@ vq_parser.add_argument("-d",    "--deterministic", action='store_true', help="En
 args = vq_parser.parse_args()
 
 if args.cudnn_determinism:
-   torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.deterministic = True
 
 # Split text prompts using the pipe character
 if args.prompts:
     args.prompts = [phrase.strip() for phrase in args.prompts.split("|")]
-    
+
 # Split target images using the pipe character
 if args.image_prompts:
     args.image_prompts = args.image_prompts.split("|")
     args.image_prompts = [image.strip() for image in args.image_prompts]
-    
+
 # Make video steps directory
 if args.make_video:
     if not os.path.exists('steps'):
@@ -129,7 +131,7 @@ def gradient_3d(width, height, start_list, stop_list, is_horizontal_list):
 
     return result
 
-    
+
 def random_gradient_image(w,h):
     array = gradient_3d(w, h, (0, 0, np.random.randint(0,255)), (np.random.randint(1,255), np.random.randint(2,255), np.random.randint(3,128)), (True, False, False))
     random_image = Image.fromarray(np.uint8(array))
@@ -225,24 +227,25 @@ class MakeCutouts(nn.Module):
         self.cut_pow = cut_pow
 
         self.augs = nn.Sequential(
-            # K.RandomHorizontalFlip(p=0.5),				# NR: add augmentation options
-            # K.RandomVerticalFlip(p=0.5),
-            # K.RandomSolarize(0.01, 0.01, p=0.7),
-            # K.RandomSharpness(0.3,p=0.4),
-            # K.RandomResizedCrop(size=(self.cut_size,self.cut_size), scale=(0.1,1),  ratio=(0.75,1.333), cropping_mode='resample', p=0.5),
-            # K.RandomCrop(size=(self.cut_size,self.cut_size), p=0.5),
-            
-            K.RandomAffine(degrees=15, translate=0.1, p=0.7, padding_mode='border'),
-            K.RandomPerspective(0.7,p=0.7),
-            K.ColorJitter(hue=0.1, saturation=0.1, p=0.7),
-            K.RandomErasing((.1, .4), (.3, 1/.3), same_on_batch=True, p=0.7),
-            )
-            
+                # K.RandomHorizontalFlip(p=0.5),				# NR: add augmentation options
+                # K.RandomVerticalFlip(p=0.5),
+                # K.RandomSolarize(0.01, 0.01, p=0.7),
+                # K.RandomSharpness(0.3,p=0.4),
+                # K.RandomResizedCrop(size=(self.cut_size,self.cut_size), scale=(0.1,1),  ratio=(0.75,1.333), cropping_mode='resample', p=0.5),
+                # K.RandomCrop(size=(self.cut_size,self.cut_size), p=0.5),
+
+                K.RandomAffine(degrees=15, translate=0.1, p=0.7, padding_mode='border'),
+                K.RandomPerspective(0.7,p=0.7),
+                K.ColorJitter(hue=0.1, saturation=0.1, p=0.7),
+                K.RandomErasing((.1, .4), (.3, 1/.3), same_on_batch=True, p=0.7),
+                )
+
         self.noise_fac = 0.1
-        
+
         # Pooling
         self.av_pool = nn.AdaptiveAvgPool2d((self.cut_size, self.cut_size))
         self.max_pool = nn.AdaptiveMaxPool2d((self.cut_size, self.cut_size))
+        self.upsample = nn.Upsample((self.cut_size,self.cut_size), mode='bilinear')
 
     def forward(self, input):
         sideY, sideX = input.shape[2:4]
@@ -259,7 +262,8 @@ class MakeCutouts(nn.Module):
             # cutout = transforms.Resize(size=(self.cut_size, self.cut_size))(input)
             
             # Pooling
-            cutout = (self.av_pool(input) + self.max_pool(input))/2
+            #cutout = (self.av_pool(input) + self.max_pool(input))/2
+            cutout = self.upsample(input)# + self.max_pool(input))/2
             cutouts.append(cutout)
             
         batch = self.augs(torch.cat(cutouts, dim=0))
@@ -269,30 +273,29 @@ class MakeCutouts(nn.Module):
             batch = batch + facs * torch.randn_like(batch)
         return batch
 
+def load_hg_model(config_path, checkpoint_path):
+    class FakeInputs:
+        def __init__(self, shape):
+            self.shape = shape
+        def batch_size(self):
+            return 1
+        def width(self):
+            return self.shape[0]
+        def height(self):
+            return self.shape[1]
+        def channels(self):
+            return self.shape[2]
+        def next(self):
+            return torch.zeros([self.batch_size(),self.channels(),self.height(),self.width()]),torch.zeros([self.batch_size(), 8, 300]),[[]]
+        def to(self, device):
+            return
 
-def load_vqgan_model(config_path, checkpoint_path):
-    global gumbel
-    gumbel = False
-    config = OmegaConf.load(config_path)
-    if config.model.target == 'taming.models.vqgan.VQModel':
-        model = vqgan.VQModel(**config.model.params)
-        model.eval().requires_grad_(False)
-        model.init_from_ckpt(checkpoint_path)
-    elif config.model.target == 'taming.models.vqgan.GumbelVQ':
-        model = vqgan.GumbelVQ(**config.model.params)
-        model.eval().requires_grad_(False)
-        model.init_from_ckpt(checkpoint_path)
-        gumbel = True
-    elif config.model.target == 'taming.models.cond_transformer.Net2NetTransformer':
-        parent_model = cond_transformer.Net2NetTransformer(**config.model.params)
-        parent_model.eval().requires_grad_(False)
-        parent_model.init_from_ckpt(checkpoint_path)
-        model = parent_model.first_stage_model
-    else:
-        raise ValueError(f'unknown model type: {config.model.target}')
-    del model.loss
-    return model
-
+    config = hg.configuration.Configuration.load(config_path)
+    inputs = FakeInputs([256,256,3])
+    gan = hg.GAN(config, inputs=inputs)
+    name = os.path.basename(config_path)
+    gan.load("saves/"+name+"/default.save")
+    return gan
 
 def resize_image(image, out_size):
     ratio = image.size[0] / image.size[1]
@@ -304,7 +307,7 @@ def resize_image(image, out_size):
 
 # Do it
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-model = load_vqgan_model(args.vqgan_config, args.vqgan_checkpoint).to(device)
+model = load_hg_model(args.vqgan_config, args.vqgan_checkpoint).to(device)
 jit = True if float(torch.__version__[:3]) < 1.8 else False
 perceptor = clip.load(args.clip_model, jit=jit)[0].eval().requires_grad_(False).to(device)
 
@@ -314,61 +317,13 @@ perceptor = clip.load(args.clip_model, jit=jit)[0].eval().requires_grad_(False).
 
 cut_size = perceptor.visual.input_resolution
 
-f = 2**(model.decoder.num_resolutions - 1)
+
 make_cutouts = MakeCutouts(cut_size, args.cutn, cut_pow=args.cut_pow)
 
-toksX, toksY = args.size[0] // f, args.size[1] // f
-sideX, sideY = toksX * f, toksY * f
+sideX = 256
+sideY = 256
 
-if gumbel:
-    e_dim = 256
-    n_toks = model.quantize.n_embed
-    z_min = model.quantize.embed.weight.min(dim=0).values[None, :, None, None]
-    z_max = model.quantize.embed.weight.max(dim=0).values[None, :, None, None]
-else:
-    e_dim = model.quantize.e_dim
-    n_toks = model.quantize.n_e
-    z_min = model.quantize.embedding.weight.min(dim=0).values[None, :, None, None]
-    z_max = model.quantize.embedding.weight.max(dim=0).values[None, :, None, None]
-    
-# z_min = model.quantize.embedding.weight.min(dim=0).values[None, :, None, None]
-# z_max = model.quantize.embedding.weight.max(dim=0).values[None, :, None, None]
-
-# normalize_imagenet = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-#                                            std=[0.229, 0.224, 0.225])
-
-# Image initialisation
-if args.init_image:
-    if 'http' in args.init_image:
-      img = Image.open(urlopen(args.init_image))
-    else:
-      img = Image.open(args.init_image)
-    pil_image = img.convert('RGB')
-    pil_image = pil_image.resize((sideX, sideY), Image.LANCZOS)
-    pil_tensor = TF.to_tensor(pil_image)
-    z, *_ = model.encode(pil_tensor.to(device).unsqueeze(0) * 2 - 1)
-elif args.init_noise == 'pixels':
-    img = random_noise_image(args.size[0], args.size[1])    
-    pil_image = img.convert('RGB')
-    pil_image = pil_image.resize((sideX, sideY), Image.LANCZOS)
-    pil_tensor = TF.to_tensor(pil_image)
-    z, *_ = model.encode(pil_tensor.to(device).unsqueeze(0) * 2 - 1)
-elif args.init_noise == 'gradient':
-    img = random_gradient_image(args.size[0], args.size[1])
-    pil_image = img.convert('RGB')
-    pil_image = pil_image.resize((sideX, sideY), Image.LANCZOS)
-    pil_tensor = TF.to_tensor(pil_image)
-    z, *_ = model.encode(pil_tensor.to(device).unsqueeze(0) * 2 - 1)
-else:
-    one_hot = F.one_hot(torch.randint(n_toks, [toksY * toksX], device=device), n_toks).float()
-    # z = one_hot @ model.quantize.embedding.weight
-    if gumbel:
-        z = one_hot @ model.quantize.embed.weight
-    else:
-        z = one_hot @ model.quantize.embedding.weight
-
-    z = z.view([-1, toksY, toksX, e_dim]).permute(0, 3, 1, 2) 
-    #z = torch.rand_like(z)*2						# NR: check
+z = torch.rand([1, 1024], device='cuda:0')*2-1
 
 z_orig = z.clone()
 z.requires_grad_(True)
@@ -439,11 +394,11 @@ print('Using seed:', seed)
 
 
 def synth(z):
-    if gumbel:
-        z_q = vector_quantize(z.movedim(1, 3), model.quantize.embed.weight).movedim(3, 1)		# Vector quantize
-    else:
-        z_q = vector_quantize(z.movedim(1, 3), model.quantize.embedding.weight).movedim(3, 1)
-    return clamp_with_grad(model.decode(z_q).add(1).div(2), 0, 1)
+    #if gumbel:
+    #    z_q = vector_quantize(z.movedim(1, 3), model.quantize.embed.weight).movedim(3, 1)		# Vector quantize
+    #else:
+    #    z_q = vector_quantize(z.movedim(1, 3), model.quantize.embedding.weight).movedim(3, 1)
+    return clamp_with_grad(model.generator(z).add(1).div(2), 0, 1)
 
 
 @torch.no_grad()
@@ -488,9 +443,8 @@ def train(i):
     loss = sum(lossAll)
     loss.backward()
     opt.step()
-    
-    with torch.no_grad():
-        z.copy_(z.maximum(z_min).minimum(z_max))
+    #with torch.no_grad():
+    #    z.copy_(z.maximum(z_min).minimum(z_max))
 
 
 i = 0
