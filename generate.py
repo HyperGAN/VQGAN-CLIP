@@ -211,7 +211,8 @@ class Prompt(nn.Module):
         embed_normed = F.normalize(self.embed.unsqueeze(0), dim=2)
         dists = input_normed.sub(embed_normed).norm(dim=2).div(2).arcsin().pow(2).mul(2)
         #dists = dists * self.weight.sign()
-        return self.weight.abs() * dists.mean()#replace_grad(dists, torch.maximum(dists, self.stop)).mean()
+
+        return self.weight * dists.mean()#replace_grad(dists, torch.maximum(dists, self.stop)).mean()
 
 
 def parse_prompt(prompt):
