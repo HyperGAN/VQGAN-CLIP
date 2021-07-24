@@ -261,14 +261,14 @@ class MakeCutouts(nn.Module):
             # cutout = input[:, :, offsety:offsety + size, offsetx:offsetx + size]
             # cutouts.append(resample(cutout, (self.cut_size, self.cut_size)))
             # cutout = transforms.Resize(size=(self.cut_size, self.cut_size))(input)
-            
+
             # Pooling
             #cutout = (self.av_pool(input) + self.max_pool(input))/2
             cutout = self.upsample(input)# + self.max_pool(input))/2
             cutouts.append(cutout)
-            
-        batch = self.augs(torch.cat(cutouts, dim=0))
-        
+
+        batch = torch.cat([self.augs(torch.cat(cutouts[1:], dim=0)), cutouts[0]], dim=0)
+
         if self.noise_fac:
             facs = batch.new_empty([self.cutn, 1, 1, 1]).uniform_(0, self.noise_fac)
             batch = batch + facs * torch.randn_like(batch)
