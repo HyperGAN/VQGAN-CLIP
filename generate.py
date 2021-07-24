@@ -36,6 +36,8 @@ import imageio
 from PIL import ImageFile, Image, PngImagePlugin
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
+from hypergan.train_hooks.differential_augmentation_train_hook import rand_contrast, rand_saturation, rand_brightness, rand_translation, rand_cutout
+
 default_image_size = 512
 if get_device_properties(0).total_memory <= 2 ** 33:  # 2 ** 33 = 8,589,934,592 bytes = 8 GB
     default_image_size = 318
@@ -267,7 +269,16 @@ class MakeCutouts(nn.Module):
             cutout = self.upsample(input)# + self.max_pool(input))/2
             cutouts.append(cutout)
 
-        batch = torch.cat([self.augs(torch.cat(cutouts[1:], dim=0)), cutouts[0]], dim=0)
+
+        raugs = torch.cat(cutouts[1:], dim=0)
+        raugs = self.augs(raugs)
+        raugs = rand_brightness(raugs)
+        raugs = rand_saturation(raugs)
+        raugs = rand_contrast(raugs)
+        raugs = rand_translation(raugs)
+        raugs = rand_cutout(raugs)
+
+        batch = torch.cat([raugs, cutouts[0]], dim=0)
 
         if self.noise_fac:
             facs = batch.new_empty([self.cutn, 1, 1, 1]).uniform_(0, self.noise_fac)
@@ -420,7 +431,7 @@ def synth(z):
     #    z_q = vector_quantize(z.movedim(1, 3), model.quantize.embed.weight).movedim(3, 1)		# Vector quantize
     #else:
     #    z_q = vector_quantize(z.movedim(1, 3), model.quantize.embedding.weight).movedim(3, 1)
-    return clamp_with_grad(model.generator(z).add(1).div(2), 0, 1)
+    return model.generator(z).add(1).div(2)
 
 
 @torch.no_grad()
@@ -452,9 +463,9 @@ def ascend_txt():
         #d_fake = model.discriminator(out)
         d_fake = model.discriminator(torch.cat([out,out], dim=1))
         #result.append(d_fake)
-        result.append(criterion(d_fake, torch.zeros_like(d_fake)))
+        result.append(criterion(d_fake, torch.ones_like(d_fake)))
     
-    if args.make_video:    
+    if args.make_video and i % 10 == 0:    
         img = np.array(out.mul(255).clamp(0, 255)[0].cpu().detach().numpy().astype(np.uint8))[:,:,:]
         img = np.transpose(img, (1, 2, 0))
         imageio.imwrite('./steps/' + str(i) + '.png', np.array(img))
